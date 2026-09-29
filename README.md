@@ -10,6 +10,6 @@ A phone-first positive self-talk app for building self-esteem and confidence.
 - Wins journal with milestones
 - Pep talks and quotes
 
-Everything is saved in your browser on your device. No accounts, no server.
+Everything is saved in your browser on your device. Optionally, sign in with Google to sync across devices (Firebase: set `FIREBASE` in `index.html` to the project's web config and publish `firestore.rules`).
 
 Open it: see the GitHub Pages link in this repo's About section.

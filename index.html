@@ -290,6 +290,15 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
       </div>
     </section>
 
+    <section class="card" id="account" hidden aria-labelledby="acctHead">
+      <span class="label" id="acctHead">Sync across devices</span>
+      <p class="small" id="acctMsg"></p>
+      <div class="row">
+        <button class="btn primary" id="acctIn">Sign in with Google</button>
+        <button class="btn" id="acctOut" hidden>Sign out</button>
+      </div>
+    </section>
+
     <footer>
       <p>If low self-worth ever turns into thoughts of hurting yourself, please reach out now. In the US, call or text 988. Elsewhere, findahelpline.com lists local lines.</p>
       <p id="syncNote" style="margin-top:8px">Saved on this device only.</p>
@@ -666,11 +675,11 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
   const KEY = "innercoach.v1";
   const blank = () => ({ name: "", focus: "confidence", mine: [], favQuotes: [], checkins: {}, practice: {}, wins: [], daily: null, weekly: null, badges: [] });
   let state = Object.assign(blank(), lsGet(KEY, {}));
-  let ref = null, writing = false, dirty = false, saveT = null;
+  let ref = null, ready = false, writing = false, dirty = false, saveT = null;
   function save() {
     lsSet(KEY, state);
     checkBadges();
-    if (!ref) return;
+    if (!ref || !ready) return;
     dirty = true; clearTimeout(saveT); saveT = setTimeout(flush, 500);
   }
   async function flush() {
@@ -686,25 +695,91 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
     }
     writing = false;
   }
+  // Account sync. Inside the Claude viewer it uses the Claude account; anywhere else (GitHub Pages)
+  // it uses Firebase with Google sign-in, once FIREBASE below holds the project's web config.
+  const FIREBASE = null;
+  const localOnly = "Saved on this device only.";
+  const hasData = s => !!(s.mine.length || s.wins.length || Object.keys(s.checkins).length || s.name);
+  // First sync on a device: combine what's in the account with what this device already has, so neither is lost.
+  function merge(cloud, local) {
+    const c = Object.assign(blank(), cloud), l = local;
+    const union = (a, b, key) => { const seen = new Set(a.map(key)); return a.concat(b.filter(x => !seen.has(key(x)))); };
+    const practice = Object.assign({}, l.practice);
+    for (const k in c.practice) practice[k] = Math.max(practice[k] || 0, c.practice[k]);
+    const later = (a, b, k) => !a ? b : !b ? a : (a[k] >= b[k] ? a : b);
+    return Object.assign(c, {
+      name: c.name || l.name,
+      mine: union(c.mine, l.mine, m => m.t),
+      favQuotes: union(c.favQuotes, l.favQuotes, q => q),
+      checkins: Object.assign({}, l.checkins, c.checkins),
+      practice,
+      wins: union(c.wins, l.wins, w => w.id).sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0)),
+      daily: later(c.daily, l.daily, "d"),
+      weekly: later(c.weekly, l.weekly, "wk"),
+      badges: union(c.badges, l.badges, b => b),
+    });
+  }
+  let unsub = null;
+  function attach(docRef, note) {
+    ref = docRef; ready = false;
+    let first = true;
+    $("syncNote").textContent = note;
+    unsub = ref.onSnapshot(snap => {
+      if (first) {
+        if (snap.metadata.fromCache) return; // wait for the server's copy before merging
+        first = false;
+        const cloud = snap.exists ? snap.data() : null;
+        const merged = cloud ? merge(cloud, state) : state;
+        const changed = !cloud || JSON.stringify(merged) !== JSON.stringify(Object.assign(blank(), cloud));
+        state = Object.assign(blank(), merged); lsSet(KEY, state); renderAll();
+        ready = true;
+        if (changed && hasData(state)) { dirty = true; flush(); }
+        return;
+      }
+      if (snap.metadata.hasPendingWrites || writing || dirty) return;
+      if (snap.exists) { state = Object.assign(blank(), snap.data()); lsSet(KEY, state); renderAll(); }
+    }, () => { detach(); $("syncNote").textContent = localOnly; });
+  }
+  function detach() { if (typeof unsub === "function") unsub(); unsub = null; ref = null; ready = false; dirty = false; }
   async function connect() {
     try {
-      if (!window.claude || !window.claude.use) return;
+      if (!window.claude || !window.claude.use) return connectFirebase();
       const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
       if (!db || !user) return;
       const id = await user.id();
       if (!id) return;
-      ref = db.doc("data/users/" + id + "/profile");
-      let first = true;
-      $("syncNote").textContent = "Saved to your Claude account. Sign in on any device to pick up where you left off.";
-      ref.onSnapshot(snap => {
-        if (snap.metadata.hasPendingWrites || writing || dirty) { first = false; return; }
-        if (snap.exists) { state = Object.assign(blank(), snap.data()); lsSet(KEY, state); renderAll(); }
-        else if (first && (state.mine.length || state.wins.length || Object.keys(state.checkins).length || state.name)) { dirty = true; flush(); }
-        first = false;
-      }, () => { ref = null; $("syncNote").textContent = localOnly; });
+      attach(db.doc("data/users/" + id + "/profile"), "Saved to your Claude account. Sign in on any device to pick up where you left off.");
     } catch { ref = null; }
   }
-  const localOnly = "Saved on this device only.";
+  const loadScript = src => new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+  async function connectFirebase() {
+    if (!FIREBASE) return;
+    const base = "https://www.gstatic.com/firebasejs/10.14.1/firebase-";
+    try { for (const m of ["app", "auth", "firestore"]) await loadScript(base + m + "-compat.js"); }
+    catch { toast("Couldn't reach the sync service. Your data is still saved on this device."); return; }
+    firebase.initializeApp(FIREBASE);
+    const auth = firebase.auth(), fs = firebase.firestore();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    $("account").hidden = false;
+    auth.getRedirectResult().catch(() => {});
+    auth.onAuthStateChanged(u => {
+      detach();
+      $("acctIn").hidden = !!u; $("acctOut").hidden = !u;
+      $("acctMsg").textContent = u
+        ? `Signed in as ${u.email || u.displayName || "you"}. Your check-ins, wins and words sync across your devices.`
+        : "Sign in with the same Google account on your computer and your phone to keep everything in step. Until then it stays on this device.";
+      if (u) attach(fs.collection("users").doc(u.uid), "Synced to your account.");
+      else $("syncNote").textContent = localOnly;
+    });
+    $("acctIn").addEventListener("click", () => {
+      auth.signInWithPopup(provider).catch(e => {
+        const code = e && e.code;
+        if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") auth.signInWithRedirect(provider);
+        else if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") toast("Sign-in didn't work. Try again.");
+      });
+    });
+    $("acctOut").addEventListener("click", () => auth.signOut().then(() => toast("Signed out. Your data stays on this device too.")));
+  }
 
   // ---------- speech ----------
   const synth = window.speechSynthesis;
