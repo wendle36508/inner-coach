@@ -117,7 +117,7 @@ p { margin: 0; }
 /* forms */
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field label { font-size: 14px; font-weight: 600; }
-.field select, .field input[type="text"], .field textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; width: 100%; min-height: 44px; font-size: 16px; }
+.field select, .field input[type="text"], .field input[type="email"], .field input[type="password"], .field textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; width: 100%; min-height: 44px; font-size: 16px; }
 .field textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
 .field input[type="range"] { accent-color: var(--accent); width: 100%; }
 .check { display: flex; gap: 10px; align-items: center; font-size: 15px; }
@@ -292,11 +292,23 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
 
     <section class="card" id="account" hidden aria-labelledby="acctHead">
       <span class="label" id="acctHead">Sync across devices</span>
-      <p class="small" id="acctMsg"></p>
-      <div class="row">
-        <button class="btn primary" id="acctIn">Sign in with Google</button>
-        <button class="btn" id="acctOut" hidden>Sign out</button>
-      </div>
+      <p class="small" id="acctMsg">Create an account once, then sign in with the same email on your computer and your phone to keep everything in step. Until then it stays on this device.</p>
+      <form id="acctForm" style="display:flex;flex-direction:column;gap:10px">
+        <div class="field">
+          <label for="acctEmail">Email</label>
+          <input type="email" id="acctEmail" autocomplete="username" autocapitalize="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="acctPass">Password (at least 6 characters)</label>
+          <input type="password" id="acctPass" autocomplete="current-password">
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit" id="acctIn">Sign in</button>
+          <button class="btn" type="button" id="acctNew">Create account</button>
+          <button class="linkbtn" type="button" id="acctReset">Forgot password?</button>
+        </div>
+      </form>
+      <div class="row"><button class="btn" id="acctOut" hidden>Sign out</button></div>
     </section>
 
     <footer>
@@ -697,7 +709,7 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
   }
   // Account sync. Inside the Claude viewer it uses the Claude account; anywhere else (GitHub Pages)
   // it uses Firebase with Google sign-in, once FIREBASE below holds the project's web config.
-  const FIREBASE = null;
+  const FIREBASE = { apiKey: "AIzaSyDe3_OQlZbkleRX9g-7zOySlzNj7eeim8s", authDomain: "inner-coach-wendle.firebaseapp.com", projectId: "inner-coach-wendle", appId: "1:618685916792:web:7952f11c265375f792ef8d", messagingSenderId: "618685916792" };
   const localOnly = "Saved on this device only.";
   const hasData = s => !!(s.mine.length || s.wins.length || Object.keys(s.checkins).length || s.name);
   // First sync on a device: combine what's in the account with what this device already has, so neither is lost.
@@ -759,24 +771,35 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
     catch { toast("Couldn't reach the sync service. Your data is still saved on this device."); return; }
     firebase.initializeApp(FIREBASE);
     const auth = firebase.auth(), fs = firebase.firestore();
-    const provider = new firebase.auth.GoogleAuthProvider();
     $("account").hidden = false;
-    auth.getRedirectResult().catch(() => {});
     auth.onAuthStateChanged(u => {
       detach();
-      $("acctIn").hidden = !!u; $("acctOut").hidden = !u;
+      $("acctForm").hidden = !!u; $("acctOut").hidden = !u;
       $("acctMsg").textContent = u
-        ? `Signed in as ${u.email || u.displayName || "you"}. Your check-ins, wins and words sync across your devices.`
-        : "Sign in with the same Google account on your computer and your phone to keep everything in step. Until then it stays on this device.";
+        ? `Signed in as ${u.email}. Your check-ins, wins and words sync across your devices.`
+        : "Create an account once, then sign in with the same email on your computer and your phone to keep everything in step. Until then it stays on this device.";
       if (u) attach(fs.collection("users").doc(u.uid), "Synced to your account.");
       else $("syncNote").textContent = localOnly;
     });
-    $("acctIn").addEventListener("click", () => {
-      auth.signInWithPopup(provider).catch(e => {
-        const code = e && e.code;
-        if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") auth.signInWithRedirect(provider);
-        else if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") toast("Sign-in didn't work. Try again.");
-      });
+    const AUTH_ERR = {
+      "auth/invalid-email": "That email doesn't look right.",
+      "auth/missing-password": "Enter a password.",
+      "auth/weak-password": "Use at least 6 characters for the password.",
+      "auth/email-already-in-use": "There's already an account with that email. Tap Sign in instead.",
+      "auth/invalid-credential": "Email or password is wrong. New here? Tap Create account.",
+      "auth/wrong-password": "Email or password is wrong.",
+      "auth/user-not-found": "No account with that email yet. Tap Create account.",
+      "auth/too-many-requests": "Too many tries. Wait a minute and try again.",
+      "auth/network-request-failed": "No connection. Try again when you're online.",
+    };
+    const creds = () => [$("acctEmail").value.trim(), $("acctPass").value];
+    const authFail = e => toast(AUTH_ERR[e && e.code] || "That didn't work. Try again.");
+    $("acctForm").addEventListener("submit", e => { e.preventDefault(); auth.signInWithEmailAndPassword(...creds()).catch(authFail); });
+    $("acctNew").addEventListener("click", () => auth.createUserWithEmailAndPassword(...creds()).then(() => toast("Account created. You're synced.")).catch(authFail));
+    $("acctReset").addEventListener("click", () => {
+      const [email] = creds();
+      if (!email) { $("acctEmail").focus(); toast("Enter your email first"); return; }
+      auth.sendPasswordResetEmail(email).then(() => toast("Check your email for a reset link")).catch(authFail);
     });
     $("acctOut").addEventListener("click", () => auth.signOut().then(() => toast("Signed out. Your data stays on this device too.")));
   }

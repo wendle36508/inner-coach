@@ -10,6 +10,6 @@ A phone-first positive self-talk app for building self-esteem and confidence.
 - Wins journal with milestones
 - Pep talks and quotes
 
-Everything is saved in your browser on your device. Optionally, sign in with Google to sync across devices (Firebase: set `FIREBASE` in `index.html` to the project's web config and publish `firestore.rules`).
+Everything is saved in your browser on your device. Create an account on the Today tab (email + password, via Firebase project `inner-coach-wendle`) to sync across devices; `firebase deploy` publishes `firestore.rules` and the sign-in setting.
 
 Open it: see the GitHub Pages link in this repo's About section.
