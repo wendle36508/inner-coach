@@ -3,6 +3,7 @@
 A phone-first positive self-talk app for building self-esteem and confidence.
 
 - Daily confidence check-in with suggestions for low days
+- Confidence trend: tap it for 2 weeks, 3 months, 1 year or all-time views
 - Affirmations across 8 focus areas, read aloud with your browser's voice
 - Mirror mode and a physiological-sigh breathing warm-up
 - Listening sessions with pauses to repeat each line
